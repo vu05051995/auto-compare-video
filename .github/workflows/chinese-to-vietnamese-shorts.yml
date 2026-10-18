@@ -1,0 +1,68 @@
+name: Chinese video to Vietnamese Shorts
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_duration:
+        description: "Output duration in seconds (max 60)"
+        required: true
+        default: "30"
+        type: choice
+        options: ["30", "45", "60"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chinese-shorts-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  make-short:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Find input video
+        id: input
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input output
+          VIDEO="$(find input -maxdepth 1 -type f \( -iname '*.mp4' -o -iname '*.mov' -o -iname '*.mkv' -o -iname '*.webm' \) | sort | head -n 1)"
+          if [[ -z "$VIDEO" ]]; then
+            echo "No video found in input/. Upload one video to input/ and commit it first." >&2
+            exit 1
+          fi
+          echo "video=$VIDEO" >> "$GITHUB_OUTPUT"
+          echo "Using: $VIDEO"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install FFmpeg and fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+      - name: Install local AI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install faster-whisper transformers sentencepiece sacremoses
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Transcribe, translate and render
+        env:
+          INPUT_VIDEO: ${{ steps.input.outputs.video }}
+          OUTPUT_SECONDS: ${{ inputs.max_duration }}
+        run: python scripts/make_short.py
+      - name: Upload review artifacts (no auto-publishing)
+        uses: actions/upload-artifact@v4
+        with:
+          name: vietnamese-youtube-short
+          path: |
+            output/short_vi.mp4
+            output/subtitles_vi.srt
+            output/transcript_zh_vi.txt
+          if-no-files-found: error
+          retention-days: 7
